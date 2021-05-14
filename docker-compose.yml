@@ -1,0 +1,41 @@
+version: '3'
+services:
+  node_1:
+    build: .
+    ports:
+      - 8000:80
+    environment:
+      - BASE_INDEX=0
+    network_mode: host
+
+  node_2:
+    build: .
+    ports:
+      - 8010:80
+    environment:
+      - BASE_INDEX=1
+    network_mode: host
+
+  node_3:
+    build: .
+    ports:
+      - 8020:80
+    environment:
+      - BASE_INDEX=2
+    network_mode: host
+
+  node_4:
+    build: .
+    ports:
+      - 8030:80
+    environment:
+      - BASE_INDEX=3
+    network_mode: host
+
+  node_5:
+    build: .
+    ports:
+      - 8040:80
+    environment:
+      - BASE_INDEX=4
+    network_mode: host
