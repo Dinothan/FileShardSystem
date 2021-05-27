@@ -6,6 +6,7 @@ const server = require("http").createServer(app);
 const io = require("socket.io")(server);
 const bodyParser = require("body-parser");
 const path = require("path");
+const md5 = require("md5");
 const addresses = require("./buildHosts").addresses;
 
 let baseIndexServer = process.env.BASE_INDEX || 0;
@@ -19,6 +20,8 @@ let check = "on";
 let status = "ok";
 let message = "";
 let fileObj = [];
+let leaderCheckSum = [];
+let nodeStorage = [];
 
 // Servers instance
 const servers = new Map();
@@ -88,8 +91,9 @@ app.post("/putCoordinator", (req, res) => {
 app.post("/newLeader", async (req, res) => {
   handleRequest(req);
   leaderId = req.body.idLeader;
+  learnerId = req.body.idLearner;
   res.status(200).send("ok");
-  io.emit("newLeader", leaderId);
+  io.emit("newLeader", { leaderId, learnerId });
   await checkLeader();
 });
 
@@ -130,11 +134,15 @@ const startElection = (_) => {
   setTimeout(() => {
     if (!someoneAnswer) {
       leaderId = id;
+      learnerId = id - 10;
       sendMessage(`${new Date().toLocaleString()} - I am leader`);
       io.emit("newLeader", leaderId);
       servers.forEach(
         async (value) =>
-          await axios.post(value + "/newLeader", { idLeader: leaderId })
+          await axios.post(value + "/newLeader", {
+            idLeader: leaderId,
+            idLearner: learnerId,
+          })
       );
     }
   }, 5000);
@@ -157,46 +165,104 @@ io.on("connection", (socket) => {
   socket.on("upload", (file) => {
     sendMessage(`${new Date().toLocaleString()} - File Uploaded`);
 
-    let len = file.length / addresses.length - 1;
+    let len = file.length / addresses.length - 2;
     let arr = [];
     let char = 0;
+    let checkSumlist = [];
+    let tempsum = [];
 
-    for (let i = 0; i < addresses.length - 1; i++) {
+    //Split into chunk files with node count
+    for (let i = 0; i < addresses.length - 2; i++) {
       arr.push(file.substring(char, len));
       char = len;
-      if (i === addresses.length - 3) {
+      if (i === addresses.length - 4) {
         len = file.length;
       } else {
         len = file.length - len;
       }
     }
-    servers.forEach(
-      async (value) =>
-        await axios.post(value + "/fileupload", {
-          message: "File Uploaded Successfully",
-        })
-    );
     fileObj = arr;
+
+    arr.forEach((res) => tempsum.push(md5(res)));
+
+    servers.forEach(async (value) => {
+      if (
+        value !== `http://0.0.0.0:80${leaderId}` &&
+        value !== `http://0.0.0.0:80${learnerId}`
+      ) {
+        checkSumlist.push({
+          host: value,
+          checksum: arr,
+        });
+        await axios.post(value + "/fileupload", {
+          message: "File Uploaded Successfully and Received Chunk files",
+          chunkFiles: arr,
+        });
+      } else if (value === `http://0.0.0.0:80${learnerId}`) {
+        await axios.post(value + "/fileupload", {
+          message: "File Uploaded Successfully and Received checksum",
+          checksumList: tempsum,
+        });
+      } else {
+        await axios.post(value + "/fileupload", {
+          message: "File Uploaded Successfully, You can Download the File Now",
+        });
+      }
+    });
+    leaderCheckSum = tempsum;
+    nodeStorage = checkSumlist;
   });
 
   socket.on("download", () => {
+    // check crashed chunk files
+    let uncorruptedFiles = [];
+    let flag = false;
+    leaderCheckSum &&
+      leaderCheckSum.length > 0 &&
+      leaderCheckSum.forEach((res, index) => {
+        nodeStorage &&
+          nodeStorage.length > 0 &&
+          nodeStorage.forEach((obj) => {
+            if (flag && res === md5(obj.checksum[index])) {
+              uncorruptedFiles.push(obj.checksum[index - 1]);
+              flag === false;
+            }
+            if (res !== md5(obj.checksum[index])) {
+              flag === true;
+            } else {
+              uncorruptedFiles.push(obj.checksum[index]);
+            }
+          });
+      });
+
     let temp = "";
-    if (fileObj && fileObj.length > 0) {
-      fileObj.forEach((res) => {
+    if (uncorruptedFiles && uncorruptedFiles.length > 0) {
+      uncorruptedFiles.forEach((res, ind) => {
         if (res[res.length - 1] === ",") {
           temp = temp + res.slice(0, -1);
+        } else {
+          temp = temp + res;
         }
-        temp = temp + res;
       });
     }
+    servers.forEach(async (value) => {
+      if (
+        value !== `http://0.0.0.0:80${leaderId}` &&
+        value !== `http://0.0.0.0:80${learnerId}`
+      ) {
+        await axios.post(value + "/fileupload", {
+          message: "Send file to learner node",
+        });
+      }
+    });
+    axios.post(`http://0.0.0.0:80${learnerId}` + "/fileupload", {
+      message: "Comparing whether chunk file is corrupted",
+    });
 
+    axios.post(`http://0.0.0.0:80${leaderId}` + "/download", {
+      message: temp,
+    });
     sendMessage(`${new Date().toLocaleString()} - File Downloading`);
-    servers.forEach(
-      async (value) =>
-        await axios.post(value + "/download", {
-          message: temp,
-        })
-    );
   });
 });
 

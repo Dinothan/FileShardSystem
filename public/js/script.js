@@ -9,10 +9,9 @@ socket.on("status", (message) => {
   document.getElementById("log-list").appendChild(li);
 });
 
-socket.on("newLeader", (leaderId) => {
-  document.getElementById(
-    "leader"
-  ).innerHTML = `The actual leader Id is ${leaderId}`;
+socket.on("newLeader", (node) => {
+  document.getElementById("leader").innerHTML = ` ${node.leaderId}`;
+  document.getElementById("learner").innerHTML = ` ${node.learnerId}`;
 });
 
 socket.on("fileupload", (message) => {
